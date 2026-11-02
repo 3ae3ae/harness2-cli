@@ -367,6 +367,8 @@ class Proposer:
         text, err = _opencode_stdout(p.stdout)
         if (p.returncode or err) and providers.USAGE_LIMIT.search(p.stdout + p.stderr):
             return "", cost, p.stdout + p.stderr
+        if err:
+            return "", cost, err
         ans = out / "answer.md"
         if ans.is_file() and ans.read_text(errors="replace").strip():
             return ans.read_text(errors="replace"), cost, ""
