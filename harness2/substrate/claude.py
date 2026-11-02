@@ -233,7 +233,7 @@ class ClaudeSubstrate:
         if not login:
             config_dir.mkdir(parents=True, exist_ok=True)
         return {
-            **{k: v for k, v in base_env.items() if k not in providers.STRIP_ENV},
+            **providers.session_env(base_env, provider),
             **providers.claude_env(provider),
             **({} if login else {"CLAUDE_CONFIG_DIR": str(config_dir)}),
         }

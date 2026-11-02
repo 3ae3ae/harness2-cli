@@ -245,12 +245,13 @@ class CodexSubstrate:
         *,
         provider: providers.Provider | None = None,
     ) -> dict[str, str]:
-        stripped = providers.STRIP_ENV
+        env = providers.session_env(base_env, provider)
         if provider is not None and provider.type == "chatgpt-login":
-            stripped += ("OPENAI_API_KEY", "CODEX_API_KEY")
+            env.pop("OPENAI_API_KEY", None)
+            env.pop("CODEX_API_KEY", None)
             home = providers.codex_login_home(provider)
         return {
-            **{k: v for k, v in base_env.items() if k not in stripped},
+            **env,
             **({"CODEX_HOME": str(home)} if home is not None else {}),
         }
 

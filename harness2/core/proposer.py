@@ -95,7 +95,7 @@ class Proposer:
             raise ValueError("model must not be empty for model sessions")
 
     def env(self) -> dict[str, str]:
-        e = {k: v for k, v in os.environ.items() if k not in providers.STRIP_ENV}
+        e = providers.session_env(os.environ, self.spec.provider, self.spec.model)
         if self.spec.provider is not None:
             if self.spec.kind == "claude":
                 e.update(providers.claude_env(self.spec.provider))
