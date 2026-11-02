@@ -21,7 +21,10 @@ import sys
 from pathlib import Path
 
 from harness2.core.spec import ChannelSpec
+from harness2.providers import SCRUB_ENV as SCRUB_ENV
 from harness2.providers import Provider
+from harness2.providers import provider_keys as provider_keys
+from harness2.providers import scrub_env as scrub_env
 from harness2.settings import ConfigError, cache_dir
 from harness2.settings import load_dotenv as load_dotenv
 
