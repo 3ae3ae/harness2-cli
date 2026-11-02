@@ -551,6 +551,11 @@ def _run_one_mode(
         library_dir=lib_dir,
     )
     res.modes[mode] = r.to_dict()
+    res.errors.extend(
+        f"{mode}: {stage.label}: proposer execution failed: {stage.error}"
+        for stage in r.stages
+        if stage.execution_failed
+    )
     events.check()
     candidates = selection.selection_pool(mode, k, r.rollouts, base)
     if pool_policy == "finals" and k == 1:
