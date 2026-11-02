@@ -49,8 +49,11 @@ def _load_rows(path: Path) -> list[J.Scored]:
 
 
 def _merge(old: list[J.Scored], new: list[J.Scored]) -> list[J.Scored]:
-    """Per (task, mode, k): a changed chosen run replaces; for the same run_id the graded
-    row wins, so a failed re-judge never erases an existing score."""
+    """Per (task, mode, k): a changed chosen run or a re-selected task replaces; for the same
+    selection the graded row wins, so a failed re-judge never erases an existing score.
+
+    Run ids are fixed labels, so a re-run task writes its new rollout under the old run id;
+    `selected_at` is what tells the two apart."""
     by_key = {(r.task_id, r.mode, r.k): r for r in old}
     for r in new:
         key = (r.task_id, r.mode, r.k)
@@ -58,6 +61,7 @@ def _merge(old: list[J.Scored], new: list[J.Scored]) -> list[J.Scored]:
         if (
             prev is not None
             and prev.run_id == r.run_id
+            and prev.selected_at == r.selected_at
             and prev.graded
             and not r.graded
             and not r.error.startswith("selection")
