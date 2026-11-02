@@ -553,6 +553,7 @@ def _run_one_mode(
             decisions={stage.label: stage.notes or stage.error for stage in r.stages},
         )
     d = sel.to_dict()
+    d["selected_at"] = datetime.now(timezone.utc).isoformat()
     d["chosen_run_dir"] = (
         runmark.relative_path(candidates[sel.chosen_label].run_dir, adapter.spec.runs_root)
         if sel.chosen_label in candidates

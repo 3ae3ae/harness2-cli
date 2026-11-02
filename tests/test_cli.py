@@ -548,6 +548,7 @@ class CliTests(unittest.TestCase):
         path = self.root / "judged.json"
         self.assertEqual(judge._load_rows(path), [])
         row = good.__dict__ | {"graded": True, "frac": 1.0}
+        row.pop("selected_at")
         row["arm"] = row.pop("mode")
         path.write_text(json.dumps([row]))
         self.assertEqual(judge._load_rows(path), [good])
