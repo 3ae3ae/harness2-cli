@@ -36,12 +36,13 @@ from harness2.core.proposer import Proposer, ProposerError
 from harness2.core.spec import CHANNELS, INSTALL_MODES, BenchSpec, ChannelSpec
 from harness2.providers import Provider
 from harness2.settings import ConfigError, load
-from harness2.substrate import AGY_SURFACE, AgySubstrate
+from harness2.substrate import AGY_SURFACE, AgySubstrate, _proc
 from harness2.substrate.agy import (
     LARGE_PROMPT_BYTES,
     extract_telemetry,
     final_message,
     parse_events,
+    render_events,
 )
 
 FAKE_AGY = r"""import json
@@ -285,6 +286,7 @@ class AgyAdapterTests(unittest.TestCase):
         self.assertIn("agy_root", INSTALL_MODES)
         self.assertEqual(AGY_SURFACE.always_on, ("GEMINI.md",))
         self.assertEqual(AGY_SURFACE.skill_dir, ".agents/skills")
+        self.assertEqual(AGY_SURFACE.script_dir, ".agents/scripts")
         self.assertIsNotNone(prompts._st(AGY_SURFACE))
 
         # Valid configuration passes check()
@@ -342,7 +344,7 @@ class AgyAdapterTests(unittest.TestCase):
             {
                 "GEMINI.md": "Always read check skill.\n",
                 ".agents/skills/check/SKILL.md": "---\ndescription: run checks\n---\nBody\n",
-                "scripts/helper.py": "print('ok')\n",
+                ".agents/scripts/helper.py": "print('ok')\n",
             },
             harness_src,
         )
@@ -362,11 +364,15 @@ class AgyAdapterTests(unittest.TestCase):
             ws = self.root / "ws"
             ws.mkdir()
             (ws / "app.py").write_text("print(1)\n")
+            (ws / "scripts").mkdir()
+            (ws / "scripts/project_tool.py").write_text("print('project script')\n")
+            self.assertNotIn("scripts/project_tool.py", sub.import_tree(ws))
             sub.install_into(install, ws)
             self.assertEqual((ws / "GEMINI.md").read_text(), "Always read check skill.\n")
             self.assertTrue((ws / ".agents/skills/check/SKILL.md").is_file())
-            self.assertTrue((ws / "scripts/helper.py").is_file())
+            self.assertTrue((ws / ".agents/scripts/helper.py").is_file())
             self.assertTrue((ws / "app.py").is_file())
+            self.assertTrue((ws / "scripts/project_tool.py").is_file())
 
             (ws / ".gemini/tmp").mkdir(parents=True)
             (ws / ".gemini/tmp/file").write_text("state")
@@ -375,6 +381,7 @@ class AgyAdapterTests(unittest.TestCase):
             self.assertFalse((ws / ".agents").exists())
             self.assertFalse((ws / ".gemini").exists())
             self.assertTrue((ws / "app.py").exists())
+            self.assertTrue((ws / "scripts/project_tool.py").is_file())
         finally:
             import shutil
 
@@ -418,6 +425,10 @@ class AgyAdapterTests(unittest.TestCase):
         self.assertEqual(rec["gemini_key"], "secret-gemini-key")
         mcp = json.loads((run_dir / "agy-home/.gemini/config/mcp_config.json").read_text())
         self.assertEqual(mcp, {"mcpServers": {}})
+        cli_mcp = json.loads(
+            (run_dir / "agy-home/.gemini/antigravity-cli/mcp_config.json").read_text()
+        )
+        self.assertEqual(cli_mcp, {"mcpServers": {}})
         self.assertEqual(rec["settings"]["modelProvider"], "gemini")
         self.assertEqual(rec["settings"]["artifactReviewPolicy"], "always-proceed")
 
@@ -739,6 +750,199 @@ class AgyAdapterTests(unittest.TestCase):
         with patch.dict(os.environ, {"FAKE_MODE": "rate_limit"}):
             with self.assertRaises(events.Stopped):
                 prop.call("Hit limit", ctx_dir, "rl-prop")
+
+    def test_stream_text_delta_tool_error_wrapper_and_transcript_fallback(self):
+        brain = self.root / "brain"
+        worker_id = "44444444-4444-4444-4444-444444444444"
+        log_dir = brain / worker_id / ".system_generated/logs"
+        log_dir.mkdir(parents=True)
+        # Compact transcript.jsonl only (no transcript_full.jsonl)
+        (log_dir / "transcript.jsonl").write_text(
+            json.dumps(
+                {
+                    "step_index": 1,
+                    "source": "MODEL",
+                    "type": "PLANNER_RESPONSE",
+                    "input_tokens": 70,
+                    "cache_read_tokens": 20,
+                    "output_tokens": 15,
+                    "tool_calls": [{"name": "view_file"}],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        stream = "\n".join(
+            [
+                json.dumps(
+                    {
+                        "event": "init",
+                        "conversation_id": "conv-delta",
+                        "init": {"model": "gemini-3.8-flash-high"},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "event": "step_update",
+                        "step_update": {
+                            "conversation_id": "conv-delta",
+                            "step_index": 1,
+                            "state": "ACTIVE",
+                            "step_type": "agent_response",
+                            "text_delta": "Checking ",
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "event": "step_update",
+                        "step_update": {
+                            "conversation_id": "conv-delta",
+                            "step_index": 1,
+                            "state": "DONE",
+                            "step_type": "agent_response",
+                            "usage": {
+                                "input_tokens": 50,
+                                "output_tokens": 5,
+                                "cache_read_tokens": 10,
+                                "thinking_tokens": 2,
+                                "total_tokens": 55,
+                            },
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "event": "step_update",
+                        "step_update": {
+                            "conversation_id": "conv-delta",
+                            "step_index": 2,
+                            "state": "ERROR",
+                            "step_type": "tool",
+                            "tool_name": "run_command",
+                            "status": "ERROR",
+                            "tool_info": {
+                                "parameters": {"CommandLine": "agy06 -p hi"},
+                                "output": f'{{"conversation_id": "{worker_id}"}}',
+                                "is_error": True,
+                            },
+                        },
+                    }
+                ),
+            ]
+        )
+        parsed = parse_events(stream)
+        self.assertEqual(final_message(parsed), "Checking")
+        rendered = render_events(parsed)
+        self.assertIn("[ASSISTANT]\nChecking", rendered)
+        self.assertIn("[ACTION] run_command:", rendered)
+
+        telemetry = extract_telemetry(stream, brain_dirs=[brain], returncode=0)
+        self.assertFalse(telemetry["ok"])
+        self.assertTrue(telemetry["incomplete"])
+        self.assertEqual(telemetry["tool_calls"], 1)
+        self.assertEqual(telemetry["tool_errors"], 1)
+        self.assertEqual(telemetry["nested_workers"]["invocations"], 1)
+        self.assertTrue(telemetry["nested_workers"]["usage_available"])
+        self.assertEqual(telemetry["nested_workers"]["input_tokens"], 70)
+        self.assertIsNone(telemetry["nested_workers"]["reasoning_tokens"])
+
+    def test_base_env_gemini_isolation_and_proc_lifecycle_safeguards(self):
+        sub = AgySubstrate(bin="agy")
+        run_dir = self.root / "env-run"
+        env, settings_path = sub.env_and_settings(
+            Provider("gemini", "gemini", api_key_env="CUSTOM_GEMINI_KEY"),
+            run_dir,
+            self.root,
+            base_env={"PATH": os.environ.get("PATH", ""), "CUSTOM_GEMINI_KEY": "from-base-env"},
+        )
+        self.assertEqual(env.get("GEMINI_API_KEY"), "from-base-env")
+        self.assertTrue(settings_path.is_file())
+
+        # Pre-cancelled run_managed never spawns child executable
+        marker = self.root / "should-not-exist"
+        events.start(None)
+        events.request_stop("already-stopped")
+        try:
+            res_pre = _proc.run_managed(
+                [
+                    sys.executable,
+                    "-c",
+                    f"from pathlib import Path; Path({str(marker)!r}).write_text('x')",
+                ],
+                cwd=self.root,
+                env={"PATH": os.environ.get("PATH", "")},
+                timeout=5,
+                cancel_check=events.stop_requested,
+            )
+            self.assertTrue(res_pre.cancelled)
+            self.assertFalse(marker.exists())
+        finally:
+            events.start(None)
+
+        # Unrelated process group survives concurrent terminate_active() + SIGKILL escalation
+        unrelated = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            start_new_session=True,
+        )
+        gc_pid_file = self.root / "gc.pid"
+        try:
+            script = (
+                "import signal, subprocess, sys, time; from pathlib import Path; "
+                "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                "p = subprocess.Popen([sys.executable, '-c', "
+                "'import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)']); "
+                f"Path({str(gc_pid_file)!r}).write_text(str(p.pid)); time.sleep(30)"
+            )
+            res_timeout = _proc.run_managed(
+                [sys.executable, "-c", script],
+                cwd=self.root,
+                env={"PATH": os.environ.get("PATH", "")},
+                timeout=0.35,
+                grace_seconds=0.2,
+            )
+            self.assertTrue(res_timeout.timed_out)
+            self.assertIsNone(unrelated.poll())
+            gc_pid = int(gc_pid_file.read_text(encoding="utf-8"))
+            with self.assertRaises(OSError):
+                os.kill(gc_pid, 0)
+
+            # Multiple active process groups terminate in one parallel grace window
+            p1 = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(30)"],
+                start_new_session=True,
+            )
+            p2 = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(30)"],
+                start_new_session=True,
+            )
+            with _proc._LOCK:
+                _proc._ACTIVE_PGIDS.update({p1.pid, p2.pid})
+            _proc.terminate_active(grace_seconds=0.3)
+            with _proc._LOCK:
+                _proc._ACTIVE_PGIDS.discard(p1.pid)
+                _proc._ACTIVE_PGIDS.discard(p2.pid)
+            self.assertIsNotNone(p1.wait(timeout=2))
+            self.assertIsNotNone(p2.wait(timeout=2))
+            self.assertIsNone(unrelated.poll())
+
+            # Broken-shebang binary passes cli_argv X_OK check and raises OSError in run_managed
+            nonexec = self.root / "broken-shebang-agy"
+            nonexec.write_text("#!/nonexistent-interp-xyz/bin\n", encoding="utf-8")
+            nonexec.chmod(0o755)
+            bad_prop = Proposer(
+                ChannelSpec("agy", "agy-login/gemini-3.8-flash-high", bin=str(nonexec)),
+                audit_dir=self.root / "missing-audit",
+                attempts=1,
+            )
+            with self.assertRaises(ProposerError):
+                bad_prop.call("Hi", None, "missing-bin")
+            self.assertIsNotNone(bad_prop._calls[-1].telemetry)
+            self.assertEqual(bad_prop._calls[-1].telemetry["returncode"], -1)
+        finally:
+            _proc.terminate_process_group(unrelated.pid)
+            unrelated.wait(timeout=5)
+            events.start(None)
 
 
 if __name__ == "__main__":

@@ -20,6 +20,7 @@ import json
 import os
 import re
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -206,7 +207,9 @@ def agy_login_home(p: Provider) -> Path | None:
     return Path(p.home).expanduser() if p.home else None
 
 
-def agy_env_and_settings(p: Provider) -> tuple[dict[str, str], dict[str, object]]:
+def agy_env_and_settings(
+    p: Provider, base_env: Mapping[str, str] | None = None
+) -> tuple[dict[str, str], dict[str, object]]:
     """Build environment variables and session settings for an Antigravity CLI run."""
     if p.type == "agy-login":
         home = agy_login_home(p)
@@ -220,9 +223,12 @@ def agy_env_and_settings(p: Provider) -> tuple[dict[str, str], dict[str, object]
             "XDG_CACHE_HOME": str(home / ".cache"),
         }, {}
     if p.type == "gemini":
+        source_env = os.environ if base_env is None else base_env
         env: dict[str, str] = {}
         if p.api_key_env:
-            env["GEMINI_API_KEY"] = os.environ.get(p.api_key_env, "")
+            val = source_env.get(p.api_key_env, "")
+            if val:
+                env["GEMINI_API_KEY"] = val
         if p.base_url:
             env["GOOGLE_GEMINI_BASE_URL"] = p.base_url
         return env, {"modelProvider": "gemini"}

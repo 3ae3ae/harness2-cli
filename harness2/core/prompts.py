@@ -722,7 +722,7 @@ The harness is a tree of components. Each has a different runtime cost and a dif
 | `GEMINI.md` | role, procedure, rules, durable facts | ALWAYS ON -- loaded whole into every session; every token competes with the agent's own work |
 | `.agents/skills/<name>/SKILL.md` | a reusable workflow | name+description advertised; the BODY is read ON DEMAND when the agent opens the skill |
 | `.agents/skills/<name>/scripts/*` | a helper carried with its skill | run via shell |
-| `scripts/<name>.py` | a deterministic helper | run on demand via `python3 scripts/<name>.py` |
+| `.agents/scripts/<name>.py` | a deterministic helper | run on demand via `python3 .agents/scripts/<name>.py` |
 
 The parts that are easy to get wrong:
 
@@ -743,12 +743,12 @@ your work is used, however good it is.
 | `GEMINI.md` | role, rules, durable facts, tool prose | ALWAYS ON -- injected whole into EVERY turn |
 | `.agents/skills/<name>/SKILL.md` | reusable workflow | name+description advertised; BODY read ON DEMAND |
 | `.agents/skills/<name>/scripts/*` | helper carried with its skill | run via shell |
-| `scripts/<name>.py` | deterministic helper | run ON DEMAND via `python3 scripts/<name>.py` |
+| `.agents/scripts/<name>.py` | deterministic helper | run ON DEMAND via `python3 .agents/scripts/<name>.py` |
 
 Hard rules:
 - Prefer an on-demand skill over new always-on prose; `GEMINI.md` is capped.
 - Name every skill's trigger situation in `GEMINI.md`.
-- `scripts/*.py` filenames must be snake_case and must compile under py_compile."""
+- `.agents/scripts/*.py` filenames must be snake_case and must compile under py_compile."""
 
 _SURFACE_COMMAND_HEAD = """\
 # WHAT YOU CAN CHANGE
@@ -842,9 +842,9 @@ def _build_surface_texts() -> dict[str, _SurfaceText]:
             surface_md=agy_md,
             inv=_levers(
                 _INV_TEMPLATE,
-                script_lever="`scripts/<name>.py`",
+                script_lever="`.agents/scripts/<name>.py`",
                 skill_lever=_SKILL_TRIGGER_LEVER,
-                loop_lever="check in a deterministic helper under `scripts/<name>.py`",
+                loop_lever="check in a deterministic helper under `.agents/scripts/<name>.py`",
             ),
             dom=_levers(
                 _DOM_TEMPLATE,
@@ -852,7 +852,7 @@ def _build_surface_texts() -> dict[str, _SurfaceText]:
                 "trigger: write that trigger line in the same edit.",
             ),
             tts_surface=agy_tts,
-            script_dir="scripts",
+            script_dir=".agents/scripts",
         ),
         "opencode": _SurfaceText(
             surface_md=_SURFACE_OPENCODE,

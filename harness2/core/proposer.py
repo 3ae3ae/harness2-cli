@@ -402,14 +402,26 @@ class Proposer:
                 output_format="stream-json",
                 settings_file=settings_path,
             )
-            res = run_managed(
-                cmd,
-                cwd=cwd,
-                env=env,
-                stdin_text=stdin_text,
-                timeout=wall,
-                cancel_check=events.stop_requested,
-            )
+            try:
+                res = run_managed(
+                    cmd,
+                    cwd=cwd,
+                    env=env,
+                    stdin_text=stdin_text,
+                    timeout=wall,
+                    cancel_check=events.stop_requested,
+                )
+            except OSError as exc:
+                self._telemetry_by_cwd[cwd] = extract_telemetry(
+                    "",
+                    configured_model=self._model(),
+                    effort=self.spec.effort,
+                    wall_seconds=0.0,
+                    returncode=-1,
+                    stderr_text=str(exc),
+                    role="improver",
+                )
+                return "", 0.0, f"{type(exc).__name__}: {exc}"
             if res.cancelled:
                 events.check()
             brain_dirs = []

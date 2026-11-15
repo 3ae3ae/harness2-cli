@@ -85,7 +85,7 @@ The Antigravity substrate (`AGY_SURFACE`, `install_mode = "agy_root"`) manages:
 - `GEMINI.md` (always-on instructions, 10,000-char cap)
 - `.agents/skills/<name>/SKILL.md` (on-demand skills; `SKILL.md` paths should be referenced
   in `GEMINI.md`)
-- `scripts/` (helper scripts)
+- `.agents/scripts/` (helper scripts)
 
 Native `.gemini/` runtime state created during task execution is excluded from task diffs and
 stripped when workspaces are cleaned. Unlike Claude Code, top-level `hooks` JSON keys are

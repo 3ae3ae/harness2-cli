@@ -161,6 +161,7 @@ def run(args, ctx) -> int:
                     gemini_dir / "AGENTS.md",
                     gemini_dir / "config/hooks.json",
                     gemini_dir / "config/mcp_config.json",
+                    gemini_dir / "antigravity-cli/mcp_config.json",
                 )
                 if path.is_file() and path.stat().st_size
             ]

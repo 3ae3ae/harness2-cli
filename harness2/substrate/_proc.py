@@ -84,8 +84,37 @@ def terminate_process_group(pgid: int, *, grace_seconds: float = 1.0) -> None:
 
 def terminate_active(*, grace_seconds: float = 0.5) -> None:
     """Terminate all active child process groups tracked by this coordinator process."""
-    for pgid in active_process_groups():
-        terminate_process_group(pgid, grace_seconds=grace_seconds)
+    pgids = active_process_groups()
+    if not pgids:
+        return
+    if os.name != "posix":
+        for pgid in pgids:
+            terminate_process_group(pgid, grace_seconds=grace_seconds)
+        return
+    targets: list[int] = []
+    for pgid in pgids:
+        if pgid <= 0 or not _pgid_alive(pgid):
+            continue
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+            targets.append(pgid)
+        except ProcessLookupError:
+            continue
+        except PermissionError:
+            targets.append(pgid)
+    if not targets:
+        return
+    deadline = time.monotonic() + max(0.0, grace_seconds)
+    while time.monotonic() < deadline:
+        targets = [pgid for pgid in targets if _pgid_alive(pgid)]
+        if not targets:
+            return
+        time.sleep(0.02)
+    for pgid in targets:
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            continue
 
 
 def _drain_stream(stream, sink: list[str]) -> None:
@@ -128,6 +157,15 @@ def run_managed(
     grace_seconds: float = 1.0,
 ) -> ProcessResult:
     """Run ``argv`` in its own session/process group and clean up all descendants on exit."""
+    if cancel_check is not None and cancel_check():
+        return ProcessResult(
+            returncode=-1,
+            stdout="",
+            stderr="",
+            duration_seconds=0.0,
+            timed_out=False,
+            cancelled=True,
+        )
     started = time.monotonic()
     deadline = (started + float(timeout)) if timeout is not None else None
     popen_kwargs: dict = {

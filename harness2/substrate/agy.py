@@ -53,6 +53,7 @@ AGY_SURFACE = SurfaceSpec(
     hooks_file=None,
     compile_skill_scripts=False,
     reject_empty_always_on=False,
+    script_dir=".agents/scripts",
 )
 
 NATIVE_PATHS = ("GEMINI.md", ".agents", ".gemini")
@@ -60,6 +61,7 @@ EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
 LARGE_PROMPT_BYTES = 65536
 _STDERR_ERROR_RE = re.compile(r"^AGY_ERROR:\s*(\{.*\})\s*$", re.M)
 _CMD_EXIT_FAIL_RE = re.compile(r"Command exited with code ([1-9]\d*)")
+_AGY_CMD_RE = re.compile(r"(?:^|[\s/\"'=:-])agy(?:\d+)?(?=$|[\s\"'}])")
 _CONV_UUID_RE = re.compile(r'"conversation_id"\s*:\s*"([0-9a-f-]{36})"')
 _AUTH_ERROR_RE = re.compile(
     r"(?i)unauthenticated|permission_denied|not authenticated|authentication failed|"
@@ -127,11 +129,21 @@ def parse_events(text_or_path: Path | str) -> list[dict]:
                 key = (conv_id, step_idx)
                 prev_pos = steps.get(key)
                 if prev_pos is not None:
-                    prev_state = raw_events[prev_pos]["step_update"].get("state")
+                    prev_su = raw_events[prev_pos]["step_update"]
+                    prev_state = prev_su.get("state")
                     new_state = su.get("state")
                     if prev_state == "DONE" and new_state != "DONE":
                         continue
-                    raw_events[prev_pos] = obj
+                    merged_su = dict(su)
+                    prev_delta = prev_su.get("text_delta")
+                    new_delta = su.get("text_delta")
+                    if isinstance(prev_delta, str) or isinstance(new_delta, str):
+                        combined_delta = (prev_delta if isinstance(prev_delta, str) else "") + (
+                            new_delta if isinstance(new_delta, str) else ""
+                        )
+                        if combined_delta:
+                            merged_su["text_delta"] = combined_delta
+                    raw_events[prev_pos] = {**obj, "step_update": merged_su}
                     continue
                 steps[key] = len(raw_events)
         raw_events.append(obj)
@@ -172,10 +184,17 @@ def _nested_cli_ids(su: dict) -> list[str]:
         return []
     params = info.get("parameters")
     cmd = str(params.get("CommandLine") or "") if isinstance(params, dict) else ""
-    if not re.search(r"\bagy\b", cmd):
+    if not _AGY_CMD_RE.search(cmd):
         return []
     out = str(info.get("output") or "")
     return list(dict.fromkeys(_CONV_UUID_RE.findall(out)))
+
+
+def _is_terminal_tool(su: dict) -> bool:
+    state = str(su.get("state") or "").upper()
+    if state in ("DONE", "ERROR", "FAILED", "CANCELLED"):
+        return True
+    return state != "ACTIVE" and str(su.get("status") or "").upper() == "ERROR"
 
 
 def _transcript_usage(path: Path) -> dict | None:
@@ -250,10 +269,11 @@ def _find_transcript(conv_id: str, brain_dirs: list[Path]) -> dict | None:
     if not conv_id:
         return None
     for brain_dir in brain_dirs:
-        candidate = brain_dir / conv_id / ".system_generated/logs/transcript_full.jsonl"
-        parsed = _transcript_usage(candidate)
-        if parsed is not None:
-            return parsed
+        logs_dir = brain_dir / conv_id / ".system_generated/logs"
+        for filename in ("transcript_full.jsonl", "transcript.jsonl"):
+            parsed = _transcript_usage(logs_dir / filename)
+            if parsed is not None:
+                return parsed
     return None
 
 
@@ -314,7 +334,7 @@ def extract_telemetry(
 
     for su in done_steps:
         stype = su.get("step_type")
-        if stype == "tool" and su.get("state") == "DONE":
+        if stype == "tool" and _is_terminal_tool(su):
             tname = str(su.get("tool_name") or "tool")
             tool_calls += 1
             tool_counts[tname] += 1
@@ -569,10 +589,12 @@ def render_events(
                 lines.append(f"[USER]\n{_clip(txt, obs_trunc)}")
         elif stype == "agent_response":
             resp = su.get("agent_response") or {}
-            txt = str(resp.get("response") or resp.get("text_delta") or "").strip()
+            txt = str(
+                resp.get("response") or resp.get("text_delta") or su.get("text_delta") or ""
+            ).strip()
             if txt:
                 lines.append(f"[ASSISTANT]\n{_clip(txt, obs_trunc)}")
-        elif stype == "tool" and su.get("state") == "DONE":
+        elif stype == "tool" and _is_terminal_tool(su):
             tname = su.get("tool_name") or "tool"
             info = su.get("tool_info") or {}
             params = json.dumps(info.get("parameters") or {}, ensure_ascii=False)
@@ -619,7 +641,7 @@ def final_message(events_or_path: list[dict] | Path | str) -> str:
         if ev.get("event") == "step_update" and isinstance(ev.get("step_update"), dict):
             su = ev["step_update"]
             if su.get("step_type") == "agent_response":
-                resp = (su.get("agent_response") or {}).get("response")
+                resp = (su.get("agent_response") or {}).get("response") or su.get("text_delta")
                 if isinstance(resp, str) and resp.strip():
                     return resp.strip()
     return ""
@@ -652,7 +674,9 @@ class AgySubstrate:
         return AGY_SURFACE
 
     def import_tree(self, root: Path, *, rejected: list[str] | None = None) -> HT.Tree:
-        return native_tree(AGY_SURFACE, root, ("GEMINI.md", ".agents/skills", "scripts"), rejected)
+        return native_tree(
+            AGY_SURFACE, root, ("GEMINI.md", ".agents/skills", ".agents/scripts"), rejected
+        )
 
     def export_tree(self, tree: HT.Tree, root: Path, *, base: HT.Tree) -> dict[str, list[str]]:
         return export_files(root, tree, base)
@@ -747,10 +771,11 @@ class AgySubstrate:
         home_subdir: str = "agy-home",
         settings_filename: str = "agy-settings.json",
     ) -> tuple[dict[str, str], Path]:
-        env = dict(os.environ if base_env is None else base_env)
+        source_env = os.environ if base_env is None else base_env
+        env = dict(source_env)
         for key in providers.STRIP_ENV:
             env.pop(key, None)
-        provider_env, extra_settings = providers.agy_env_and_settings(provider)
+        provider_env, extra_settings = providers.agy_env_and_settings(provider, source_env)
         env.update(provider_env)
         run_path = Path(run_dir)
         run_path.mkdir(parents=True, exist_ok=True)
@@ -767,6 +792,9 @@ class AgySubstrate:
             (agy_home / ".gemini/config").mkdir(parents=True, exist_ok=True)
             (agy_home / ".gemini/antigravity-cli").mkdir(parents=True, exist_ok=True)
             (agy_home / ".gemini/config/mcp_config.json").write_text(
+                '{"mcpServers": {}}\n', encoding="utf-8"
+            )
+            (agy_home / ".gemini/antigravity-cli/mcp_config.json").write_text(
                 '{"mcpServers": {}}\n', encoding="utf-8"
             )
             env.update(
