@@ -30,7 +30,7 @@ These go before the command: `harness2 -C ../api --json status`.
 
 ### `init`
 
-Set up harness2 in a project: asks which agent runs your tasks (`claude`, `codex` or a
+Set up harness2 in a project: asks which agent runs your tasks (`claude`, `codex`, `agy` or a
 custom `command`), whether it reaches its models through the CLI's own login (your
 subscription) or an API key, which models to use, and where the harness lives; writes
 `.harness2/config.toml`, `.harness2/.gitignore` and `.harness2/tasks/`.
@@ -38,7 +38,7 @@ subscription) or an API key, which models to use, and where the harness lives; w
 | Option | Meaning |
 |---|---|
 | `--yes`, `-y` | Take every default without asking. Without a terminal, defaults are taken anyway. |
-| `--executor {claude,codex,command}` | Skip the executor question. |
+| `--executor {claude,codex,agy,command}` | Skip the executor question. |
 | `--auth {login,api-key}` | Skip the login question. |
 | `--force` | Overwrite an existing config file. |
 
@@ -171,7 +171,8 @@ With `--json`, `--yes` or `--dry-run` is required, since nothing is asked.
 
 Only the executor's harness files are written. For Claude Code those are `CLAUDE.md`,
 `.claude/skills/`, `.claude/agents/`, `.claude/scripts/` and the `hooks` key of
-`.claude/settings.json` (its other keys are kept).
+`.claude/settings.json` (its other keys are kept). For Antigravity those are `GEMINI.md`,
+`.agents/skills/` and `scripts/`.
 
 ### `config show | get | set | path`
 
@@ -187,13 +188,13 @@ comments. The value is read as a TOML literal when it parses: `run.k 2` is a num
 
 ### `chat`
 
-Start your own Claude Code or Codex in the project, with a guide to harness2 and the
-project's tasks and runs added to its instructions. Ask it to help write tasks, a check or a
-rubric, or to explain a run's results.
+Start your own Claude Code, Codex or Antigravity session in the project, with a guide to
+harness2 and the project's tasks and runs added to its instructions. Ask it to help write
+tasks, a check or a rubric, or to explain a run's results.
 
 | Option | Meaning |
 |---|---|
-| `--with {claude,codex}` | Which CLI to start. Default: the improver's channel, if installed. |
+| `--with {claude,codex,agy}` | Which CLI to start. Default: the improver's channel, if installed. |
 
 ### `login [codex]`
 
@@ -259,7 +260,7 @@ Print a shell completion script; see [below](#shell-completion).
   eval/<mode>/        results of harness2 eval
   base_harness/       the project's harness when the run started
   rollouts/<id>/      one agent run: prompt.md, stream.jsonl (trajectory), final.md,
-                      deliverable.patch or output/, meta.json, judge.json
+                      deliverable.patch or output/, meta.json, telemetry.json, judge.json
   adapt/<namespace>/<task>/
     summary.json      what happened for the task
     harnesses/        every candidate harness

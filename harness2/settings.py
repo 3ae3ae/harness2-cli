@@ -74,6 +74,8 @@ DEFAULTS = {
         },
         "claude-login": {"type": "claude-login"},
         "chatgpt-login": {"type": "chatgpt-login"},
+        "agy-login": {"type": "agy-login"},
+        "gemini": {"type": "gemini", "api_key_env": "GEMINI_API_KEY"},
     },
 }
 _MISSING = object()

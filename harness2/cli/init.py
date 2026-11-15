@@ -32,12 +32,18 @@ from ..core import tree as HT
 MODELS = {
     "claude": ("claude-sonnet-5-5", "claude-opus-5-5"),
     "codex": ("gpt-6.1-sol", "gpt-6.1-sol"),
+    "agy": ("gemini-3.8-flash-high", "gemini-3.8-flash-high"),
 }
 # executor/channel -> (subscription provider, API-key provider)
-PROVIDERS = {"claude": ("claude-login", "anthropic"), "codex": ("chatgpt-login", "openai")}
+PROVIDERS = {
+    "claude": ("claude-login", "anthropic"),
+    "codex": ("chatgpt-login", "openai"),
+    "agy": ("agy-login", "gemini"),
+}
 AUTH = {
     "claude": ("your Claude subscription, through Claude Code's own login", "ANTHROPIC_API_KEY"),
     "codex": ("your ChatGPT subscription, through a Codex login for harness2", "OPENAI_API_KEY"),
+    "agy": ("your Antigravity login/profile (agy or configured wrapper)", "GEMINI_API_KEY"),
 }
 
 CONFIG = """\
@@ -81,7 +87,9 @@ def add_parser(sub) -> argparse.ArgumentParser:
     )
     p.add_argument("--yes", "-y", action="store_true", help="take every default, ask nothing")
     p.add_argument("--force", action="store_true", help="overwrite an existing config file")
-    p.add_argument("--executor", choices=("claude", "codex", "command"), help="skip that question")
+    p.add_argument(
+        "--executor", choices=("claude", "codex", "agy", "command"), help="skip that question"
+    )
     p.add_argument(
         "--auth",
         choices=("login", "api-key"),
@@ -110,13 +118,13 @@ def _run(args) -> tuple[int, dict]:
     print(f"Setting up Harness² in {root}")
 
     interactive = not args.yes and sys.stdin.isatty()
-    found = {name: _version(name) for name in ("claude", "codex")}
-    default = next((name for name in ("claude", "codex") if found[name]), None)
+    found = {name: _version(name) for name in ("claude", "codex", "agy")}
+    default = next((name for name in ("claude", "codex", "agy") if found[name]), None)
     executor = args.executor or (_pick_executor(ask, found, default) if interactive else default)
     if executor is None:
         message = (
-            "Neither Claude Code (`claude`) nor Codex (`codex`) is on PATH. Install one, or "
-            "rerun with --executor command to drive your own agent."
+            "None of Claude Code (`claude`), Codex (`codex`) or Antigravity (`agy`) is on "
+            "PATH. Install one, or rerun with --executor command to drive your own agent."
         )
         print(message, file=sys.stderr)
         return 1, {"error": message, "exit_code": 1}
@@ -128,7 +136,7 @@ def _run(args) -> tuple[int, dict]:
         editable = [g.strip() for g in ask("Editable files, comma-separated globs", "").split(",")]
         editable = [g for g in editable if g]
         command_lines = COMMAND_LINES.format(command=_q(command), editable=_q(editable))
-        channel = "claude" if found["claude"] else "codex"
+        channel = "claude" if found["claude"] else ("codex" if found["codex"] else "agy")
     else:
         channel = executor
     auth = args.auth or (_pick_auth(ask, channel) if interactive else "login")
@@ -206,7 +214,7 @@ def _version(binary: str) -> str:
 
 
 def _pick_executor(ask, found: dict[str, str], default: str | None) -> str | None:
-    options = ["claude", "codex", "command"]
+    options = ["claude", "codex", "agy", "command"]
     if default is None:
         return None
     print("Which agent should run your tasks?")
@@ -227,10 +235,16 @@ def _harness_summary(where: Path, executor: str, editable: list[str]) -> str:
     if executor == "command":
         found = sorted({p for g in editable for p in where.glob(g) if p.is_file()})
         return f"Harness: {len(found)} editable file(s) under {where}."
+    from ..substrate.agy import AgySubstrate
     from ..substrate.claude import ClaudeSubstrate
     from ..substrate.codex import CodexSubstrate
 
-    sub = ClaudeSubstrate() if executor == "claude" else CodexSubstrate()
+    if executor == "claude":
+        sub = ClaudeSubstrate()
+    elif executor == "agy":
+        sub = AgySubstrate()
+    else:
+        sub = CodexSubstrate()
     tree = sub.import_tree(where)
     surface = sub.surface()
     always = surface.always_on[0]
@@ -264,6 +278,12 @@ def _key_summary(root: Path, models: tuple[str, ...]) -> str:
     loaded = S.load(None)
     lines = []
     for name in dict.fromkeys(providers.split_model(m)[0] for m in models if "/" in m):
+        if name == "agy-login":
+            lines.append(
+                "Antigravity uses your CLI profile or configured wrapper (`executor.bin`, "
+                "`providers.agy-login.home`)."
+            )
+            continue
         if name == "chatgpt-login":
             home = providers.codex_login_home(loaded.provider(name))
             ok = providers.codex_logged_in(home)

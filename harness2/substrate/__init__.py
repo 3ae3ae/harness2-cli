@@ -14,6 +14,7 @@
 
 """Agent-framework and command executors behind the substrate interface."""
 
+from .agy import AGY_SURFACE, AgySubstrate
 from .base import Install, Launcher, RunRequest, Substrate
 from .claude import CLAUDE_SURFACE, ClaudeSubstrate
 from .codex import CODEX_SURFACE, CodexSubstrate
@@ -25,6 +26,8 @@ __all__ = [
     "Launcher",
     "RunRequest",
     "Substrate",
+    "AgySubstrate",
+    "AGY_SURFACE",
     "OpencodeSubstrate",
     "OPENCODE_SURFACE",
     "CodexSubstrate",

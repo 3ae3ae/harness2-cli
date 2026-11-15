@@ -12,7 +12,8 @@
 
 A coding agent is a model plus a **harness**: the instructions, skills, subagents, helper
 scripts and hooks it runs with. `harness2` improves the harness of the agent you already use
-(Claude Code's `CLAUDE.md` and `.claude/`, or Codex's `AGENTS.md` and `.agents/`) by running
+(Claude Code's `CLAUDE.md` and `.claude/`, Codex's `AGENTS.md` and `.agents/`, or
+Antigravity's `GEMINI.md` and `.agents/skills/`) by running
 it on tasks from your own project, studying what happened, and refining the harness from
 that evidence. The model stays the same. Your files change only when you apply the result.
 
@@ -64,8 +65,8 @@ the details.
 
 You need Python 3.12 or 3.13, git, and the agent CLI whose harness you want to tune,
 installed, on your `PATH` and logged in:
-[Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude`) or
-[Codex](https://github.com/openai/codex) (`codex`).
+[Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude`),
+[Codex](https://github.com/openai/codex) (`codex`) or Antigravity (`agy`).
 
 ```bash
 uv tool install git+https://github.com/3ae3ae/harness2-cli
@@ -189,6 +190,7 @@ the paper's. [How it works](docs/how-it-works.md) describes what was added aroun
 - [How it works](docs/how-it-works.md): the method, the final harness, what a run costs and stores
 - [Tasks](docs/tasks.md): writing tasks, workspaces, grading
 - [Configuration](docs/configuration.md): settings, subscriptions, models and providers
+- [Antigravity (`agy`)](docs/antigravity.md): native Antigravity executor, improver, isolation and telemetry
 - [Command reference](docs/cli.md): every command and flag
 - [Changelog](CHANGELOG.md) and [contributing](CONTRIBUTING.md)
 

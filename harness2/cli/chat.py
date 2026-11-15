@@ -44,7 +44,9 @@ def add_parser(sub) -> argparse.ArgumentParser:
         description="Start Claude Code or Codex in this project with a guide to harness2 "
         "added to its instructions.",
     )
-    p.add_argument("--with", dest="tool", choices=("claude", "codex"), help="which CLI to start")
+    p.add_argument(
+        "--with", dest="tool", choices=("claude", "codex", "agy"), help="which CLI to start"
+    )
     return p
 
 
@@ -55,7 +57,7 @@ def run(args, ctx) -> int:
     tool = args.tool or _default_tool(ctx.settings)
     binary = shutil.which(tool) if tool else None
     if not binary:
-        print("Neither `claude` nor `codex` is on PATH.", file=sys.stderr)
+        print("None of `claude`, `codex` or `agy` is on PATH.", file=sys.stderr)
         return 1
     guide = (
         CHAT_INTRO.format(root=ctx.project)
@@ -64,6 +66,8 @@ def run(args, ctx) -> int:
     )
     if tool == "claude":
         argv = [binary, "--append-system-prompt", guide]
+    elif tool == "agy":
+        argv = [binary, "-i", guide]
     else:
         argv = [binary, "-c", f"developer_instructions={json.dumps(guide)}"]
     os.chdir(ctx.project)
@@ -73,6 +77,9 @@ def run(args, ctx) -> int:
 
 def _default_tool(settings) -> str | None:
     for tool in (settings.get("improver.channel"), settings.get("executor.name"), "claude"):
-        if tool in ("claude", "codex") and shutil.which(tool):
+        if tool in ("claude", "codex", "agy") and shutil.which(tool):
             return tool
-    return "codex" if shutil.which("codex") else None
+    for fallback in ("codex", "agy"):
+        if shutil.which(fallback):
+            return fallback
+    return None

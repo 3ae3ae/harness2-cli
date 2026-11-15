@@ -712,6 +712,44 @@ Hard rules, each one learned from a previous failure:
 - `.claude/scripts/*.py` filenames must be snake_case and must compile under py_compile."""
 
 
+_SURFACE_AGY_HEAD = """\
+# WHAT YOU CAN CHANGE
+
+The harness is a tree of components. Each has a different runtime cost and a different reach:
+
+| path | what it is | when it is in context |
+|---|---|---|
+| `GEMINI.md` | role, procedure, rules, durable facts | ALWAYS ON -- loaded whole into every session; every token competes with the agent's own work |
+| `.agents/skills/<name>/SKILL.md` | a reusable workflow | name+description advertised; the BODY is read ON DEMAND when the agent opens the skill |
+| `.agents/skills/<name>/scripts/*` | a helper carried with its skill | run via shell |
+| `scripts/<name>.py` | a deterministic helper | run on demand via `python3 scripts/<name>.py` |
+
+The parts that are easy to get wrong:
+
+`.agents/skills/` -- YAML frontmatter with a `description:` is REQUIRED, or the skill is dropped
+silently at load; a `name:` line is optional and must match the directory. A skill never named
+in `GEMINI.md` with its situation trigger may never be opened, so keep a trigger line in
+`GEMINI.md`. If a skill calls a helper, ship it under `.agents/skills/<name>/scripts/` so it
+travels with the skill."""
+
+_TTS_SURFACE_HEAD_AGY = """\
+# EDITABLE HARNESS SURFACE
+
+You may write ONLY these paths. Anything else is off the editable surface: it is dropped before
+your work is used, however good it is.
+
+| path | component | when it is in context |
+|---|---|---|
+| `GEMINI.md` | role, rules, durable facts, tool prose | ALWAYS ON -- injected whole into EVERY turn |
+| `.agents/skills/<name>/SKILL.md` | reusable workflow | name+description advertised; BODY read ON DEMAND |
+| `.agents/skills/<name>/scripts/*` | helper carried with its skill | run via shell |
+| `scripts/<name>.py` | deterministic helper | run ON DEMAND via `python3 scripts/<name>.py` |
+
+Hard rules:
+- Prefer an on-demand skill over new always-on prose; `GEMINI.md` is capped.
+- Name every skill's trigger situation in `GEMINI.md`.
+- `scripts/*.py` filenames must be snake_case and must compile under py_compile."""
+
 _SURFACE_COMMAND_HEAD = """\
 # WHAT YOU CAN CHANGE
 
@@ -785,8 +823,37 @@ def _build_surface_texts() -> dict[str, _SurfaceText]:
             _surface_part(claude_md, "# HOW TO MAKE A CHANGE"),
         ]
     )
+    agy_md = "\n\n".join(
+        [
+            _SURFACE_AGY_HEAD,
+            _surface_part(_SURFACE_CODEX, "Change only what a trajectory", "So prefer, in this"),
+            shape_and_how,
+        ]
+    )
+    agy_tts = "\n\n".join(
+        [
+            _TTS_SURFACE_HEAD_AGY,
+            _surface_part(_SURFACE_CODEX, "# HOW TO MAKE A CHANGE"),
+        ]
+    )
     command_md = "\n\n".join([_SURFACE_COMMAND_HEAD, shape_and_how])
     return {
+        "agy": _SurfaceText(
+            surface_md=agy_md,
+            inv=_levers(
+                _INV_TEMPLATE,
+                script_lever="`scripts/<name>.py`",
+                skill_lever=_SKILL_TRIGGER_LEVER,
+                loop_lever="check in a deterministic helper under `scripts/<name>.py`",
+            ),
+            dom=_levers(
+                _DOM_TEMPLATE,
+                trigger_sentence="A skill exists only once its name appears in `GEMINI.md` as a "
+                "trigger: write that trigger line in the same edit.",
+            ),
+            tts_surface=agy_tts,
+            script_dir="scripts",
+        ),
         "opencode": _SurfaceText(
             surface_md=_SURFACE_OPENCODE,
             inv=_levers(

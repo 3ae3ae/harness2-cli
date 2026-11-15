@@ -53,6 +53,7 @@ all you need:
 |---|---|
 | `claude-login/<model>`, e.g. `claude-login/claude-sonnet-5-5` | your Claude subscription, through Claude Code's login (`claude auth login`) |
 | `chatgpt-login/<model>`, e.g. `chatgpt-login/gpt-6.1-sol` | your ChatGPT subscription, through a Codex login kept for harness2 (`harness2 login codex`, once) |
+| `agy-login/<model>`, e.g. `agy-login/gemini-3.8-flash-high` | your Antigravity (`agy`) login or isolated wrapper binary (`executor.bin` / `providers.agy-login.home`) |
 
 `harness2 init` picks these by default, and `harness2 login` and `harness2 doctor` say
 whether they are ready. Runs keep your personal setup out of the harness being measured:
@@ -64,6 +65,13 @@ whether they are ready. Runs keep your personal setup out of the harness being m
   a flag, so harness2 gives it a home of its own, `~/.local/state/harness2/codex-home`.
   `harness2 login codex` signs that home in to ChatGPT once. It is a separate login: your own
   `~/.codex` is never read or changed. Runs also pass `--ignore-user-config --ignore-rules`.
+- **Antigravity (`agy`)** passes a per-session `--settings` JSON file (without writing to
+  user settings on disk). For `gemini` API-key runs, harness2 creates an isolated per-run
+  `HOME` (`agy-home`) with an empty `.gemini/config/mcp_config.json`. For `agy-login`, use
+  an isolated profile wrapper (`executor.bin` / `improver.bin`) or `[providers.agy-login]
+  home = "..."`; personal `~/.gemini/GEMINI.md`, `AGENTS.md`, `hooks.json` or `mcp_config.json`
+  under a custom `home` are reported by `harness2 doctor`. See [Antigravity (`agy`)](antigravity.md)
+  for full configuration, telemetry and migration details.
 
 To run Codex on your own home anyway, with whatever hooks and instructions it holds, set
 its path; `harness2 doctor` then lists the personal files every run will include:
@@ -91,9 +99,13 @@ api_key_env = "ANTHROPIC_API_KEY"
 type = "openai"
 base_url = "https://api.openai.com/v1"
 api_key_env = "OPENAI_API_KEY"
+
+[providers.gemini]
+type = "gemini"
+api_key_env = "GEMINI_API_KEY"
 ```
 
-So `anthropic/claude-sonnet-5-5` and `openai/gpt-6.1-sol` work as soon as the matching key
+So `anthropic/claude-sonnet-5-5`, `openai/gpt-6.1-sol` and `gemini/gemini-3.8-flash-high` work as soon as the matching key
 is set. Add your own provider for anything else:
 
 ```toml
@@ -123,14 +135,16 @@ region = "us-east-1"
 
 Each agent CLI speaks to some provider types and not others:
 
-| Provider type | Claude Code (`claude`) | Codex (`codex`) | OpenCode (`opencode`) |
-|---|---|---|---|
-| `claude-login` | yes | no | no |
-| `chatgpt-login` | no | yes | no |
-| `anthropic` | yes | via `harness2 bridge` | yes |
-| `openai` | no | yes (Responses API) | yes (Chat Completions) |
-| `vertex` | yes | via `harness2 bridge` | yes |
-| `bedrock` | yes | via `harness2 bridge` | no |
+| Provider type | Claude Code (`claude`) | Codex (`codex`) | Antigravity (`agy`) | OpenCode (`opencode`) |
+|---|---|---|---|---|
+| `claude-login` | yes | no | no | no |
+| `chatgpt-login` | no | yes | no | no |
+| `agy-login` | no | no | yes | no |
+| `anthropic` | yes | via `harness2 bridge` | no | yes |
+| `openai` | no | yes (Responses API) | no | yes (Chat Completions) |
+| `gemini` | no | no | yes | yes |
+| `vertex` | yes | via `harness2 bridge` | no | yes |
+| `bedrock` | yes | via `harness2 bridge` | no | no |
 
 `harness2 doctor` reports a model whose provider its CLI cannot use. To run Codex on a model
 it cannot reach directly, serve that model as a Responses API endpoint with the bridge
@@ -140,7 +154,7 @@ it cannot reach directly, serve that model as a Responses API endpoint with the 
 harness2 bridge --model anthropic/claude-sonnet-5-5
 ```
 
-The agent CLIs are the ones installed on your system (`claude`, `codex`, `opencode` on
+The agent CLIs are the ones installed on your system (`claude`, `codex`, `agy`, `opencode` on
 `PATH`). Set `executor.bin` or `improver.bin` to use another binary or a full command.
 
 With an API-key provider, every run also gets a fresh, empty configuration directory
@@ -154,10 +168,10 @@ it.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `name` | `"claude"` | `claude`, `codex` or `command`. Plugin suites accept their own executors (the benchmark plugin uses `opencode` and `codex`). |
-| `model` | `""` | `provider/model` the executor runs on. Required for `claude` and `codex`. |
+| `name` | `"claude"` | `claude`, `codex`, `agy` or `command`. Plugin suites accept their own executors (the benchmark plugin uses `opencode` and `codex`). |
+| `model` | `""` | `provider/model` the executor runs on. Required for `claude`, `codex` and `agy`. |
 | `bin` | `""` | Binary or command to start the CLI. Empty means the executor name on `PATH`. |
-| `effort` | `"high"` | Reasoning effort passed to the CLI. |
+| `effort` | `"high"` | Reasoning effort passed to the CLI (`low`, `medium`, `high`, `xhigh`, `max` for `agy`). |
 | `timeout` | `1800` | Seconds one rollout may take. A task's `timeout` overrides it. |
 | `command` | `""` | `command` executor only: the shell command that runs one task. `{workspace}`, `{prompt_file}` and `{output}` are replaced with quoted paths. |
 | `editable` | `[]` | `command` executor only: glob patterns, relative to `paths.harness`, of the files the improver may edit. |
@@ -174,7 +188,7 @@ person.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `channel` | `"claude"` | Which CLI runs the session: `claude`, `codex` or `opencode`. `[selector]` also accepts `human`. |
+| `channel` | `"claude"` | Which CLI runs the session: `claude`, `codex`, `agy` or `opencode`. `[selector]` also accepts `human`. |
 | `model` | `""` | `provider/model`. Required for the improver. |
 | `bin` | `""` | Binary or command for the channel's CLI. |
 | `effort` | `"high"` | Reasoning effort. |

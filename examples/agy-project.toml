@@ -1,0 +1,47 @@
+# Example Harness2 project configuration for native Antigravity (`agy`).
+# Copy to `.harness2/config.toml` and adjust models/provider to match your environment.
+#
+# Option A: Isolated profile login (recommended with an isolated agy wrapper binary)
+[executor]
+name = "agy"
+model = "agy-login/gemini-3.8-flash-high"
+# Point `bin` to your isolated profile launcher wrapper or `agy` on PATH.
+bin = "agy"
+effort = "high"
+timeout = 1800
+
+[improver]
+channel = "agy"
+model = "agy-login/gemini-3.8-flash-high"
+bin = "agy"
+effort = "high"
+timeout = 3600
+
+[selector]
+channel = "agy"
+model = "agy-login/gemini-3.8-flash-low"
+bin = "agy"
+effort = "low"
+
+[reflector]
+channel = "agy"
+model = "agy-login/gemini-3.8-flash-low"
+bin = "agy"
+effort = "low"
+
+[judge]
+channel = "agy"
+model = "agy-login/gemini-3.8-flash-low"
+bin = "agy"
+effort = "low"
+
+# Optional custom profile home when invoking `agy` directly with an isolated HOME:
+# [providers.agy-login]
+# home = "/path/to/isolated-agy-profile/home"
+#
+# Option B: Direct Gemini API key (replace `agy-login/...` above with `gemini/gemini-3.8-flash-high`
+# and set GEMINI_API_KEY in `.harness2/.env`; Harness2 automatically creates a clean `agy-home`
+# per session with empty MCP config).
+# [providers.gemini]
+# type = "gemini"
+# api_key_env = "GEMINI_API_KEY"

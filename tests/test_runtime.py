@@ -163,7 +163,7 @@ class ProposerTests(unittest.TestCase):
         return [json.loads(line) for line in self.record.read_text().splitlines()]
 
     def test_channels_alias_empty_and_human(self):
-        self.assertEqual(CHANNELS, ("claude", "codex", "opencode", "human"))
+        self.assertEqual(CHANNELS, ("claude", "codex", "opencode", "agy", "human"))
         self.assertEqual(ChannelSpec("claude_cli", "local/model").kind, "claude")
         with self.assertRaises(ValueError):
             ChannelSpec("missing", "model")

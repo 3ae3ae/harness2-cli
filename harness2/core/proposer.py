@@ -35,6 +35,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import providers
+from ..providers import Provider
+from ..substrate._proc import run_managed
+from ..substrate.agy import AgySubstrate, extract_telemetry
+from ..substrate.agy import final_message as agy_final_message
+from ..substrate.agy import parse_events as parse_agy_events
 from ..substrate.codex import CodexSubstrate, parse_items_text
 from . import events
 from .spec import ChannelSpec
@@ -76,6 +81,7 @@ class Reply:
     error: str = ""
     audit: Path | None = None
     workspace: Path | None = None
+    telemetry: dict | None = None
 
     def __bool__(self) -> bool:
         return self.ok
@@ -89,6 +95,7 @@ class Proposer:
     audit_dir: Path | None = None
     attempts: int = 2
     _calls: list[Reply] = field(default_factory=list)
+    _telemetry_by_cwd: dict[Path, dict] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.spec.kind != "human" and not self.spec.model.strip():
@@ -150,6 +157,7 @@ class Proposer:
         wall = int(timeout or self.spec.timeout)
         tries = max(1, int(self.attempts if max_attempts is None else max_attempts))
         last = ""
+        last_telemetry: dict | None = None
         spent_usd = 0.0
         t0 = time.time()
         for attempt in range(1, tries + 1):
@@ -164,6 +172,9 @@ class Proposer:
                     text, cost, err = getattr(self, f"_{self.spec.kind}")(
                         tmp, mission, system, wall
                     )
+                telemetry = self._telemetry_by_cwd.pop(tmp, None)
+                if telemetry is not None:
+                    last_telemetry = telemetry
                 spent_usd += cost
                 if err and providers.USAGE_LIMIT.search(err):
                     events.request_stop("usage_limit")
@@ -179,6 +190,7 @@ class Proposer:
                     wall_s=round(time.time() - t0, 1),
                     attempts=attempt,
                     channel=self.spec.kind,
+                    telemetry=telemetry,
                 )
                 if harvest:
                     r.workspace = self._harvest(tmp, harvest, label, cache_key)
@@ -209,6 +221,7 @@ class Proposer:
             channel=self.spec.kind,
             error=last,
             cost_usd=spent_usd,
+            telemetry=last_telemetry,
         )
         self._calls.append(r)
         self._write_audit(r, mission, system, cache_key)
@@ -375,6 +388,67 @@ class Proposer:
         tail = _strip_oc_banner(p.stderr or "").strip()[-300:]
         return "", cost, f"rc={p.returncode}: {err or tail or 'empty reply'}"
 
+    def _agy(self, cwd: Path, mission: str, system: str, wall: int) -> tuple[str, float, str]:
+        prompt = f"# SYSTEM INSTRUCTIONS\n\n{system}\n\n# END\n\n{mission}" if system else mission
+        sub = AgySubstrate(bin=self.spec.bin or "agy")
+        provider = self.spec.provider or Provider("agy-login", "agy-login")
+        meta_dir = Path(tempfile.mkdtemp(prefix="harness2-agy-meta-")).resolve()
+        try:
+            env, settings_path = sub.env_and_settings(provider, meta_dir, cwd, base_env=self.env())
+            cmd, stdin_text = sub.argv(
+                prompt,
+                self._model(),
+                effort=self.spec.effort,
+                output_format="stream-json",
+                settings_file=settings_path,
+            )
+            res = run_managed(
+                cmd,
+                cwd=cwd,
+                env=env,
+                stdin_text=stdin_text,
+                timeout=wall,
+                cancel_check=events.stop_requested,
+            )
+            if res.cancelled:
+                events.check()
+            brain_dirs = []
+            if env.get("AGY_BRAIN"):
+                brain_dirs.append(Path(env["AGY_BRAIN"]).expanduser())
+            if env.get("HOME"):
+                brain_dirs.append(Path(env["HOME"]).expanduser() / ".gemini/antigravity-cli/brain")
+            telemetry = extract_telemetry(
+                res.stdout,
+                brain_dirs=brain_dirs,
+                configured_model=self._model(),
+                effort=self.spec.effort,
+                wall_seconds=res.duration_seconds,
+                returncode=res.returncode,
+                timed_out=res.timed_out,
+                cancelled=res.cancelled,
+                stderr_text=res.stderr,
+                role="improver",
+            )
+            self._telemetry_by_cwd[cwd] = telemetry
+            cost = float(telemetry["cost_usd"] or 0.0)
+            if res.timed_out:
+                return "", cost, f"Antigravity session timed out after {wall}s"
+            if telemetry["rate_limited"]:
+                return "", cost, f"{telemetry['error'] or ''} {res.stderr}".strip()
+            if not telemetry["ok"]:
+                detail = (
+                    telemetry["error"]
+                    or res.stderr.strip()[-300:]
+                    or f"status={telemetry['status']}"
+                )
+                return "", cost, f"rc={res.returncode}: {detail}"
+            text = agy_final_message(parse_agy_events(res.stdout))
+            if not text.strip():
+                return "", cost, "empty reply from Antigravity"
+            return text, cost, ""
+        finally:
+            shutil.rmtree(meta_dir, ignore_errors=True)
+
     def _harvest(self, tmp: Path, sub: str, label: str, cache_key: str = "") -> Path | None:
         """Copy `tmp/<sub>` somewhere durable before the session directory is removed."""
         src = tmp / sub
@@ -444,6 +518,7 @@ class Proposer:
                     "wall_s": r.wall_s,
                     "cost_usd": r.cost_usd,
                     "error": r.error,
+                    **({"telemetry": r.telemetry} if r.telemetry is not None else {}),
                 },
                 indent=2,
             ),

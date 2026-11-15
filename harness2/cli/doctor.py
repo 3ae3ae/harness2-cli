@@ -17,11 +17,13 @@
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 
 from .. import providers, registry
 from ..core.proposer import Proposer
 from ..core.spec import ChannelSpec
 from ..substrate._native import cli_argv
+from ..substrate.agy import EFFORT_LEVELS as AGY_EFFORT_LEVELS
 from . import _common as C
 
 
@@ -82,6 +84,12 @@ def run(args, ctx) -> int:
                     providers.codex_args(provider, bare, role["effort"])
                 elif channel == "opencode":
                     providers.opencode_config(provider, bare)
+                elif channel == "agy":
+                    providers.agy_env_and_settings(provider)
+                    if role["effort"] and role["effort"] not in AGY_EFFORT_LEVELS:
+                        raise ValueError(
+                            f"effort {role['effort']!r} must be one of {AGY_EFFORT_LEVELS}"
+                        )
                 if channel != "command":
                     models.setdefault(
                         (channel, model),
@@ -141,6 +149,28 @@ def run(args, ctx) -> int:
                         "check": "Codex home",
                         "ok": True,
                         "detail": " and ".join(files) + " are part of every Codex run",
+                    }
+                )
+        if provider.type == "agy-login":
+            home = providers.agy_login_home(provider) or Path.home()
+            gemini_dir = home / ".gemini"
+            personal = [
+                str(path)
+                for path in (
+                    gemini_dir / "GEMINI.md",
+                    gemini_dir / "AGENTS.md",
+                    gemini_dir / "config/hooks.json",
+                    gemini_dir / "config/mcp_config.json",
+                )
+                if path.is_file() and path.stat().st_size
+            ]
+            if personal:
+                rows.append(
+                    {
+                        "check": "Antigravity home",
+                        "ok": True,
+                        "detail": ", ".join(personal)
+                        + " will load unless an isolated profile wrapper is used",
                     }
                 )
     if args.live:

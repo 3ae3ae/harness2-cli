@@ -45,7 +45,16 @@ class ProviderTests(unittest.TestCase):
             provider.region = "changed"
         self.assertEqual(
             providers.PROVIDER_TYPES,
-            ("anthropic", "openai", "vertex", "bedrock", "claude-login", "chatgpt-login"),
+            (
+                "anthropic",
+                "openai",
+                "vertex",
+                "bedrock",
+                "claude-login",
+                "chatgpt-login",
+                "agy-login",
+                "gemini",
+            ),
         )
         self.assertEqual(
             providers.STRIP_ENV,
@@ -60,6 +69,8 @@ class ProviderTests(unittest.TestCase):
                 "CLAUDE_CODE_USE_VERTEX",
                 "CLOUD_ML_REGION",
                 "OPENAI_BASE_URL",
+                "GEMINI_API_KEY",
+                "GOOGLE_GEMINI_BASE_URL",
             ),
         )
 

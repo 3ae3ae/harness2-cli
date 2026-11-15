@@ -56,7 +56,7 @@ def add_parser(subparsers):
     )
     p.add_argument("--suite", help="task suite (default: tasks, your own)")
     p.add_argument("--bench", dest="suite", help=argparse.SUPPRESS)
-    p.add_argument("--executor", help="agent that runs the tasks: claude, codex or command")
+    p.add_argument("--executor", help="agent that runs the tasks: claude, codex, agy or command")
     p.add_argument("--name", help="run name (default: <executor>-k<k>)")
     p.add_argument("--k", type=int, help="recursion budget per task (default 1)")
     p.add_argument(

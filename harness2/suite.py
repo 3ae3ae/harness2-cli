@@ -39,6 +39,9 @@ from .core.spec import BenchPrompts, BenchSpec, ChannelSpec
 from .registry import SuiteContext
 from .settings import ConfigError, Settings
 from .substrate._native import checked_path, cli_argv
+from .substrate._proc import run_managed
+from .substrate.agy import EFFORT_LEVELS as AGY_EFFORT_LEVELS
+from .substrate.agy import AgySubstrate, extract_telemetry
 from .substrate.claude import ClaudeSubstrate, parse_events
 from .substrate.codex import CodexSubstrate
 from .substrate.command import CommandSubstrate
@@ -312,6 +315,9 @@ class GenericAdapter:
         elif name == "codex":
             self.substrate = CodexSubstrate(bin=self.executor["bin"])
             install_mode = "codex_root"
+        elif name == "agy":
+            self.substrate = AgySubstrate(bin=self.executor["bin"])
+            install_mode = "agy_root"
         elif name == "command":
             try:
                 self.substrate = CommandSubstrate(
@@ -321,7 +327,7 @@ class GenericAdapter:
                 raise ConfigError(str(exc)) from exc
             install_mode = "command_files"
         else:
-            raise ConfigError("the tasks suite runs on claude, codex or command")
+            raise ConfigError("the tasks suite runs on claude, codex, agy or command")
         self.spec = BenchSpec(
             name="tasks",
             runs_root=ctx.run_root,
@@ -444,60 +450,108 @@ class GenericAdapter:
                     ["git", "rev-parse", "HEAD"], cwd=ws, text=True
                 ).strip()
             env = dict(os.environ)
+            stdin_text = ""
+            stderr_text = ""
+            stdout_text = ""
+            cancelled = False
             if self.executor["name"] != "command":
                 provider_name, model = providers.split_model(self.executor["model"])
                 provider = self.settings.provider(provider_name)
                 if self.executor["name"] == "claude":
                     env = self.substrate.env(env, provider, run_dir / "claude-home")
+                    argv = self.substrate.argv(
+                        prompt_file, ws, model, self.executor["effort"], provider=provider
+                    )
+                    stdin_text = prompt_file.read_text(encoding="utf-8")
+                elif self.executor["name"] == "agy":
+                    env, settings_path = self.substrate.env_and_settings(
+                        provider, run_dir, ws, base_env=env
+                    )
+                    argv, stdin_text = self.substrate.argv(
+                        prompt_file.read_text(encoding="utf-8"),
+                        model,
+                        effort=self.executor["effort"],
+                        settings_file=settings_path,
+                    )
                 else:
                     home = None
                     if provider.type != "chatgpt-login":
                         home = run_dir / "codex-home"
                         self.substrate.write_home(home, provider, model, self.executor["effort"])
                     env = self.substrate.env(env, home, provider=provider)
-                argv = self.substrate.argv(
-                    prompt_file, ws, model, self.executor["effort"], provider=provider
-                )
+                    argv = self.substrate.argv(
+                        prompt_file, ws, model, self.executor["effort"], provider=provider
+                    )
+                    stdin_text = prompt_file.read_text(encoding="utf-8")
             try:
                 if self.executor["name"] == "command":
                     exit_code = self.substrate.run(prompt_file, ws, run_dir, wall, env)
                 else:
-                    with (
-                        prompt_file.open("rb") as stdin,
-                        (run_dir / "stream.jsonl").open("wb") as stdout,
-                        (run_dir / "stderr.log").open("wb") as stderr,
-                    ):
-                        exit_code = subprocess.run(
-                            argv,
-                            cwd=ws,
-                            env=env,
-                            stdin=stdin,
-                            stdout=stdout,
-                            stderr=stderr,
-                            timeout=wall,
-                        ).returncode
-            except subprocess.TimeoutExpired:
-                exit_code, timed_out = -1, True
+                    res = run_managed(
+                        argv,
+                        cwd=ws,
+                        env=env,
+                        stdin_text=stdin_text,
+                        timeout=wall,
+                        cancel_check=events.stop_requested,
+                    )
+                    exit_code = res.returncode
+                    timed_out = res.timed_out
+                    cancelled = res.cancelled
+                    stdout_text = res.stdout
+                    stderr_text = res.stderr
+                    (run_dir / "stream.jsonl").write_text(stdout_text, encoding="utf-8")
+                    if stderr_text:
+                        (run_dir / "stderr.log").write_text(stderr_text, encoding="utf-8")
             except OSError as exc:
-                (run_dir / "stderr.log").write_text(str(exc), encoding="utf-8")
+                stderr_text = str(exc)
+                (run_dir / "stderr.log").write_text(stderr_text, encoding="utf-8")
                 exit_code = -1
+            if cancelled:
+                shutil.rmtree(run_dir, ignore_errors=True)
+                events.check()
             stream = run_dir / "stream.jsonl"
-            failed = exit_code != 0 or any(
-                event.get("type") in ("error", "turn.failed")
-                or (
-                    event.get("type") == "result"
-                    and (event.get("is_error") or event.get("subtype") not in (None, "success"))
+            agy_telemetry = None
+            if self.executor["name"] == "agy":
+                brain_dirs = []
+                if env.get("AGY_BRAIN"):
+                    brain_dirs.append(Path(env["AGY_BRAIN"]).expanduser())
+                if env.get("HOME"):
+                    brain_dirs.append(
+                        Path(env["HOME"]).expanduser() / ".gemini/antigravity-cli/brain"
+                    )
+                agy_telemetry = extract_telemetry(
+                    stdout_text,
+                    brain_dirs=brain_dirs,
+                    configured_model=model,
+                    effort=self.executor["effort"],
+                    wall_seconds=round(time.monotonic() - started, 3),
+                    returncode=exit_code,
+                    timed_out=timed_out,
+                    cancelled=cancelled,
+                    stderr_text=stderr_text,
+                    role="executor",
                 )
-                for event in parse_events(stream)
-            )
+                failed = not agy_telemetry["ok"]
+            else:
+                failed = exit_code != 0 or any(
+                    event.get("type") in ("error", "turn.failed")
+                    or (
+                        event.get("type") == "result"
+                        and (event.get("is_error") or event.get("subtype") not in (None, "success"))
+                    )
+                    for event in parse_events(stream)
+                )
             if failed:
                 tail = "".join(
                     path.read_text(encoding="utf-8", errors="replace")[-16000:]
                     for path in (stream, run_dir / "stderr.log")
                     if path.is_file()
                 )
-                if providers.USAGE_LIMIT.search(tail):
-                    shutil.rmtree(run_dir)
+                if (
+                    agy_telemetry and agy_telemetry["rate_limited"]
+                ) or providers.USAGE_LIMIT.search(tail):
+                    shutil.rmtree(run_dir, ignore_errors=True)
                     events.request_stop("usage_limit")
                     raise events.Stopped("usage_limit")
             if config["workspace"] == "project":
@@ -510,14 +564,35 @@ class GenericAdapter:
             (run_dir / "final.md").write_text(
                 self.substrate.final_message(stream), encoding="utf-8"
             )
+            if agy_telemetry is not None:
+                output_artifact = ""
+                if (
+                    config["workspace"] == "project"
+                    and (run_dir / "deliverable.patch").is_file()
+                    and (run_dir / "deliverable.patch").read_text(encoding="utf-8").strip()
+                ):
+                    output_artifact = "deliverable.patch"
+                elif (run_dir / "output").is_dir():
+                    output_artifact = "output/"
+                elif (run_dir / "final.md").read_text(encoding="utf-8").strip():
+                    output_artifact = "final.md"
+                agy_telemetry["output_artifact"] = output_artifact or None
+                (run_dir / "telemetry.json").write_text(
+                    json.dumps(agy_telemetry, indent=2) + "\n", encoding="utf-8"
+                )
             meta = {
                 "task_id": task_id,
                 "deliverable": config["deliverable"],
-                "ok": exit_code == 0 and not timed_out,
+                "ok": (
+                    bool(agy_telemetry["ok"])
+                    if agy_telemetry is not None
+                    else (exit_code == 0 and not timed_out)
+                ),
                 "exit_code": exit_code,
                 "wall_s": round(time.monotonic() - started, 3),
                 "cost_usd": self.substrate.cost_usd(stream),
                 "timed_out": timed_out,
+                **({"telemetry": agy_telemetry} if agy_telemetry is not None else {}),
             }
             (run_dir / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
         runmark.mark_complete(run_dir, run_id=run_id, harness_dir=harness_dir)
@@ -701,8 +776,8 @@ def check(ctx: SuiteContext) -> list[str]:
     problems = []
     settings = ctx.settings
     executor = settings.get("executor.name")
-    if executor not in ("claude", "codex", "command"):
-        problems.append("the tasks suite runs on claude, codex or command")
+    if executor not in ("claude", "codex", "agy", "command"):
+        problems.append("the tasks suite runs on claude, codex, agy or command")
     elif executor != "command":
         try:
             cli_argv(settings.get("executor.bin"), executor)
@@ -727,7 +802,14 @@ def check(ctx: SuiteContext) -> list[str]:
             if role != "executor":
                 _channel(settings, role)
             provider_name, _ = providers.split_model(values["model"])
-            problems.extend(providers.check(settings.provider(provider_name)))
+            provider = settings.provider(provider_name)
+            if kind == "agy":
+                providers.agy_env_and_settings(provider)
+                if values.get("effort") and values["effort"] not in AGY_EFFORT_LEVELS:
+                    raise ConfigError(
+                        f"effort {values['effort']!r} must be one of {AGY_EFFORT_LEVELS}"
+                    )
+            problems.extend(providers.check(provider))
         except ConfigError as exc:
             problems.append(f"{role}: {exc}")
     tasks_dir = settings.path("paths.tasks")

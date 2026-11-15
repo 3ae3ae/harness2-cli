@@ -99,6 +99,15 @@ def request_stop(reason: str) -> None:
     global _stopped
     with _lock:
         _stopped = reason
+    from ..substrate._proc import terminate_active
+
+    terminate_active()
+
+
+def stop_requested() -> bool:
+    """Return True when an explicit stop/cancellation has been requested."""
+    with _lock:
+        return bool(_stopped)
 
 
 def totals() -> dict:
