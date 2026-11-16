@@ -260,10 +260,12 @@ def _record_sessions(ledger: Ledger, stages: Sequence[Stage]) -> None:
         ledger.session(stage.label, stage.usd, cached=stage.cached, attempts=stage.attempts)
 
 
-def _cached_rollout(adapter, work_dir, label, run_id, harness_dir) -> RunView | None:
+def _cached_rollout(adapter, work_dir, task_id, label, run_id, harness_dir) -> RunView | None:
     """Reuse completed rollouts without executing or charging for them again."""
     cache = work_dir / "rollouts" / label
-    if not runmark.is_complete(cache, harness_dir=harness_dir):
+    if not runmark.is_complete(
+        cache, harness_dir=harness_dir, inputs=runmark.task_inputs(adapter, task_id)
+    ):
         return None
     record = runmark.read_mark(cache)
     if record.get("run_id") != run_id:
@@ -290,6 +292,7 @@ def _finish_rollout(adapter, work_dir, task_id, rv, harness_dir, started) -> Non
             work_dir / "rollouts" / rv.label,
             run_id=rv.run_id,
             harness_dir=harness_dir,
+            inputs=runmark.task_inputs(adapter, task_id),
             extra={"rollout": data},
         )
     events.emit(
@@ -322,7 +325,7 @@ def _roll(
             adapter.substrate.surface(), tree, work_dir / "harnesses" / label
         )
     run_id = run_id_of(label)
-    cached = _cached_rollout(adapter, work_dir, label, run_id, hdir)
+    cached = _cached_rollout(adapter, work_dir, task_id, label, run_id, hdir)
     if cached is not None:
         if record and ledger is not None:
             ledger.rollout(label, cached=True)

@@ -25,8 +25,11 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import Mock, patch
 
+from harness2 import registry, settings, suite
 from harness2.core import runmark, schedule
+from harness2.demo import DemoAdapter, DemoProposer
 
 
 class _FakeAdapter:
@@ -128,7 +131,7 @@ class SummaryInputTests(unittest.TestCase):
                     "domain": "d",
                     "k": 1,
                     "status": "ok",
-                    "inputs": schedule._task_inputs(adapter, "task-1"),
+                    "inputs": runmark.task_inputs(adapter, "task-1"),
                     "modes": {"agg": {"ok": True}},
                     "selections": {"agg": {"ok": True, "chosen_label": "c1"}},
                 }
@@ -136,7 +139,7 @@ class SummaryInputTests(unittest.TestCase):
         )
 
     def _resume(self, adapter):
-        self.res.inputs = schedule._task_inputs(adapter, "task-1")
+        self.res.inputs = runmark.task_inputs(adapter, "task-1")
         out = io.StringIO()
         with redirect_stdout(out):
             resumed = schedule._resume(
@@ -191,7 +194,7 @@ class SummaryInputTests(unittest.TestCase):
                     "domain": "d",
                     "k": 1,
                     "status": "ok",
-                    "inputs": schedule._task_inputs(adapter, "task-1"),
+                    "inputs": runmark.task_inputs(adapter, "task-1"),
                     "modes": {"agg": {"ok": True}, "seq": {"ok": True}},
                     "selections": {
                         "agg": {"ok": True, "chosen_label": "c1"},
@@ -204,7 +207,7 @@ class SummaryInputTests(unittest.TestCase):
         # The task changes; only `agg` is re-run and written back.
         (self.files / "ledger.csv").write_text("amount\n1.00\n2.00\n")
         res = schedule.TaskResult(task_id="task-1", domain="d", k=1)
-        res.inputs = schedule._task_inputs(adapter, "task-1")
+        res.inputs = runmark.task_inputs(adapter, "task-1")
         res.status = "ok"
         res.modes["agg"] = {"ok": True}
         res.selections["agg"] = {"ok": True, "chosen_label": "c2"}
@@ -215,6 +218,119 @@ class SummaryInputTests(unittest.TestCase):
         self.assertIn("agg", merged["modes"])
         self.assertNotIn("seq", merged["modes"])
         self.assertNotIn("seq", merged["selections"])
+
+
+class DemoRolloutInputTests(unittest.TestCase):
+    def test_changed_inputs_rerun_task_and_update_selected_result(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            adapter = DemoAdapter(Path(temporary))
+            proposer = DemoProposer(adapter.spec.channels["proposer"])
+
+            def run():
+                return schedule.run_task(
+                    "ledger-1",
+                    1,
+                    adapter=adapter,
+                    prop=proposer,
+                    runs_root=adapter.spec.runs_root,
+                )
+
+            first = run()
+            self.assertEqual(first.status, "ok")
+            for selection in first.selections.values():
+                chosen = runmark.resolve_path(selection["chosen_run_dir"], adapter.spec.runs_root)
+                self.assertEqual(adapter.deliverable_text(chosen), "Total: 85.15\n")
+            executions = adapter.execution_count
+            self.assertEqual(executions, 7)
+            (adapter.task_files("ledger-1") / "ledger.csv").write_text("amount\n2.00\n")
+            second = run()
+            self.assertEqual(second.status, "ok")
+            self.assertNotEqual(first.inputs, second.inputs)
+            self.assertEqual(adapter.execution_count - executions, 7)
+            for selection in second.selections.values():
+                chosen = runmark.resolve_path(selection["chosen_run_dir"], adapter.spec.runs_root)
+                self.assertEqual(adapter.deliverable_text(chosen), "Total: 2.00\n")
+            executions = adapter.execution_count
+            self.assertEqual(run().status, "skipped")
+            self.assertEqual(adapter.execution_count, executions)
+
+
+class TasksSuiteInputTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.project = self.root / "project"
+        (self.project / ".harness2").mkdir(parents=True)
+        (self.project / "instructions.txt").write_text("Read the task.\n")
+        self.task = suite.new_task(
+            self.project / ".harness2/tasks", "one", files=True, domain="d", check=None
+        )
+        (self.task / "task.md").write_text("Use version one.\n")
+        self.source = self.task / "files/source.txt"
+        self.source.write_text("source version one")
+        overrides = {
+            "executor.name": "command",
+            "executor.command": "unused",
+            "executor.editable": ["instructions.txt"],
+            "improver.model": "anthropic/fixture",
+        }
+        config = settings.load(
+            self.project, overrides={key: (value, "test") for key, value in overrides.items()}
+        )
+        self.adapter = suite.make_adapter(
+            registry.SuiteContext(config, self.project, self.root / "runs")
+        )
+
+        def execute(prompt_file, workspace, run_dir, timeout, env):
+            (workspace / "output/answer.txt").write_text(
+                prompt_file.read_text() + (workspace / "source.txt").read_text()
+            )
+            (run_dir / "stream.log").write_text("Finished.\n")
+            return 0
+
+        self.runner = Mock(side_effect=execute)
+        executor = patch.object(self.adapter.substrate, "run", self.runner)
+        executor.start()
+        self.addCleanup(executor.stop)
+
+    def test_unchanged_inputs_reuse_rollout(self):
+        run = self.adapter.execute("one", None, "r1")
+        self.assertEqual(self.adapter.execute("one", None, "r1"), run)
+        self.assertEqual(self.runner.call_count, 1)
+        self.assertEqual(
+            runmark.read_mark(run)["inputs"],
+            runmark.inputs_fingerprint(self.adapter.task_prompt("one"), self.source.parent),
+        )
+
+    def test_changed_task_prompt_reruns_rollout(self):
+        run = self.adapter.execute("one", None, "r1")
+        before = runmark.read_mark(run)
+        (self.task / "task.md").write_text("Use version two.\n")
+        self.assertEqual(self.adapter.execute("one", None, "r1"), run)
+        self.assertEqual(self.runner.call_count, 2)
+        self.assertNotEqual(before["inputs"], runmark.read_mark(run)["inputs"])
+        self.assertTrue((run / "output/answer.txt").read_text().startswith("Use version two.\n"))
+
+    def test_changed_source_file_reruns_rollout(self):
+        run = self.adapter.execute("one", None, "r1")
+        before = runmark.read_mark(run)
+        self.source.write_text("source version two")
+        self.assertEqual(self.adapter.execute("one", None, "r1"), run)
+        self.assertEqual(self.runner.call_count, 2)
+        self.assertNotEqual(before["inputs"], runmark.read_mark(run)["inputs"])
+        self.assertTrue((run / "output/answer.txt").read_text().endswith("source version two"))
+
+    def test_legacy_marker_without_inputs_is_reused(self):
+        run = self.adapter.execute("one", None, "r1")
+        marker = runmark.read_mark(run)
+        marker.pop("inputs", None)
+        (run / runmark.MARK).write_text(json.dumps(marker))
+        self.source.write_text("source version two")
+        self.assertEqual(self.adapter.execute("one", None, "r1"), run)
+        self.assertEqual(self.runner.call_count, 1)
+        self.assertNotIn("inputs", runmark.read_mark(run))
+        self.assertTrue((run / "output/answer.txt").read_text().endswith("source version one"))
 
 
 if __name__ == "__main__":

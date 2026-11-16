@@ -412,7 +412,8 @@ class GenericAdapter:
         if not run_name or run_name in (".", "..") or "\\" in run_name:
             raise ConfigError(f"invalid rollout id {run_id!r}")
         run_dir = self.spec.runs_root / "rollouts" / run_name
-        if runmark.is_complete(run_dir, harness_dir=harness_dir):
+        inputs = runmark.inputs_fingerprint(self.task_prompt(task_id), self.task_files(task_id))
+        if runmark.is_complete(run_dir, harness_dir=harness_dir, inputs=inputs):
             return run_dir
         if run_dir.exists():
             shutil.rmtree(run_dir)
@@ -520,7 +521,7 @@ class GenericAdapter:
                 "timed_out": timed_out,
             }
             (run_dir / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
-        runmark.mark_complete(run_dir, run_id=run_id, harness_dir=harness_dir)
+        runmark.mark_complete(run_dir, run_id=run_id, harness_dir=harness_dir, inputs=inputs)
         return run_dir
 
     def _meta(self, run_dir: Path) -> dict:

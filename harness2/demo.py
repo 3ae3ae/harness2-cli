@@ -88,8 +88,9 @@ class DemoAdapter:
         self, task_id: str, harness_dir: Path | None, run_id: str, *, timeout: int | None = None
     ) -> Path:
         run_dir = self.spec.runs_root / "executions" / run_id
+        inputs = runmark.inputs_fingerprint(self.task_prompt(task_id), self.task_files(task_id))
         if (
-            runmark.is_complete(run_dir, harness_dir=harness_dir)
+            runmark.is_complete(run_dir, harness_dir=harness_dir, inputs=inputs)
             and self.delivered(run_dir)
             and (run_dir / "trajectory.md").is_file()
         ):
@@ -110,7 +111,7 @@ class DemoAdapter:
             "[ACTION] Run scripts/summarize.py on ledger.csv\n[OBSERVATION]\n" + result.stdout,
             encoding="utf-8",
         )
-        runmark.mark_complete(run_dir, run_id=run_id, harness_dir=harness_dir)
+        runmark.mark_complete(run_dir, run_id=run_id, harness_dir=harness_dir, inputs=inputs)
         return run_dir
 
     def delivered(self, run_dir: Path) -> bool:
