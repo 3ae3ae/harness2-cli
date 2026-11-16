@@ -8,7 +8,8 @@ All notable changes to Harness² CLI are documented here. The format follows
 
 The first release of Harness² CLI, a general-purpose version of
 [google-research/harness2](https://github.com/google-research/harness2) (forked at
-`1cfe254`). The method and its prompts are unchanged; everything around them is new.
+`1cfe254`, with upstream's fixes merged through `6868817`). The method and its prompts are
+unchanged; everything around them is new.
 
 ### Added
 
@@ -54,3 +55,26 @@ The first release of Harness² CLI, a general-purpose version of
 - The Vertex-only configuration in `.env` from the core package. JobBench, LAB and
   WorkBuddy-Bench moved, with that configuration, to the
   [harness2-benchmarks plugin](plugins/harness2-benchmarks/).
+
+### Fixed
+
+Merged from upstream:
+
+- A finished task or rollout is reused only while its prompt and files are unchanged.
+- A failed improver session is reported as an error and retried on the next run.
+- A partly finished task resumes the modes that did finish.
+- A re-run that fails clears that mode's old selection, and a failed re-judge keeps a score
+  only for the same selection.
+- A grade without a pass count stays ungraded instead of counting as zero.
+- A rejected harness edit keeps its files for the retry.
+- An OpenCode session error is no longer cached as an answer.
+- Benchmarks plugin: JobBench isolates each rollout's installs, temporary files and
+  workspace, notes a non-zero exit in the trajectory, and leaves a judge worker failure
+  ungraded; LAB rejects conflicting judge verdicts and keeps relative artifact paths for
+  grading.
+
+### Security
+
+- Agents no longer inherit provider API keys, AWS credentials or host tokens such as
+  `GITHUB_TOKEN` from the environment; each keeps only its own provider's key (merged from
+  upstream). See [Secrets](docs/configuration.md#secrets).

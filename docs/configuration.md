@@ -250,3 +250,10 @@ ANTHROPIC_API_KEY=sk-ant-...
 ```
 
 Variables already set in your shell win over `.harness2/.env`.
+
+The agents Harness² starts on Claude Code, Codex or OpenCode do not inherit the other
+credentials in your environment: provider API keys, AWS credentials, and host tokens such as
+`GITHUB_TOKEN` (the list is `SCRUB_ENV` in `harness2/providers.py`). Each agent keeps only
+what its own provider needs: the variable named by `api_key_env`, and the AWS credentials
+for a Bedrock provider. Variables not on the list pass through unchanged. A `command`
+executor and a task's `check` command receive your environment as it is.

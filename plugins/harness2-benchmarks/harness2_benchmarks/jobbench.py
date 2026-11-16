@@ -1016,7 +1016,7 @@ class JobBenchAdapter:
         if not config.JB_JUDGE_API_BASE:
             print(
                 "  [jb] WARNING: HARNESS2_JUDGE_BASE_URL is empty; rollouts will run "
-                "but judging refuses until it is set (see .env.example)",
+                "but judging refuses until it is set (see docs/SETUP.md)",
                 flush=True,
             )
 
