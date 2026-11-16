@@ -56,7 +56,7 @@ def require(name: str, *, needed_by: str) -> str:
     v = env(name)
     if not v:
         raise ConfigError(
-            f"{name} is required for {needed_by}; set it in .harness2/.env or the shell (see .env.example)"
+            f"{name} is required for {needed_by}; set it in .harness2/.env or the shell (see docs/SETUP.md)"
         )
     return str(v)
 
