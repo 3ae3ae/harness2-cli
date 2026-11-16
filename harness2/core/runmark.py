@@ -28,6 +28,8 @@ import os
 import time
 from pathlib import Path
 
+from .spec import BenchmarkAdapter
+
 MARK = ".adapt_complete"
 
 
@@ -103,6 +105,21 @@ def inputs_fingerprint(task_prompt: str, files_dir: Path | None) -> str:
                 h.update(b"<unreadable>")
             h.update(b"\0")
     return h.hexdigest()[:16]
+
+
+def task_inputs(adapter: BenchmarkAdapter, task_id: str) -> str | None:
+    """The task's own identity: its model-visible prompt plus its source material.
+
+    `None` when the adapter cannot supply them, which keeps the summary check off rather than
+    turning a missing task into a spurious invalidation.
+    """
+    try:
+        prompt = adapter.task_prompt(task_id)
+        files = getattr(adapter, "task_files", None)
+        files_dir = files(task_id) if callable(files) else None
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return inputs_fingerprint(prompt, files_dir)
 
 
 def mark_complete(

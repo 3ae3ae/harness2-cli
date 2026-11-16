@@ -263,21 +263,6 @@ class TaskResult:
         }
 
 
-def _task_inputs(adapter: BenchmarkAdapter, task_id: str) -> str | None:
-    """The task's own identity: its model-visible prompt plus its source material.
-
-    `None` when the adapter cannot supply them, which keeps the summary check off rather than
-    turning a missing task into a spurious invalidation.
-    """
-    try:
-        prompt = adapter.task_prompt(task_id)
-        files = getattr(adapter, "task_files", None)
-        files_dir = files(task_id) if callable(files) else None
-    except (OSError, RuntimeError, ValueError):
-        return None
-    return runmark.inputs_fingerprint(prompt, files_dir)
-
-
 def _merged_status(merged: dict) -> str:
     """ok iff every mode record on the merged summary succeeded and no error is recorded."""
     modes = merged.get("modes") or {}
@@ -478,7 +463,7 @@ def _roll_bases(
     rolled: dict[str, RunView] = {}
     work_dir = dead_dir.parent
     for label, rid in pending:
-        cached = recursion._cached_rollout(adapter, work_dir, label, rid, None)
+        cached = recursion._cached_rollout(adapter, work_dir, task_id, label, rid, None)
         if cached is not None:
             rolled[label] = cached
     pending = [(label, rid) for label, rid in pending if label not in rolled]
@@ -674,7 +659,7 @@ def run_task(
     work = base_ns.task_dir(runs_root, task_id)
     work.mkdir(parents=True, exist_ok=True)
     summary_path = work / "summary.json"
-    res.inputs = _task_inputs(adapter, task_id)
+    res.inputs = runmark.task_inputs(adapter, task_id)
 
     if summary_path.is_file() and _resume(
         summary_path, task_id, k, adapter, runs_root, modes, seed, tag, mode_libs, res
