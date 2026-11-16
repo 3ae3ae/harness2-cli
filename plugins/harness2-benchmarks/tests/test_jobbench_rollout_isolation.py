@@ -17,6 +17,7 @@
 import json
 import os
 import re
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -67,6 +68,7 @@ def _opencode_allows(permission: str, path: Path) -> bool:
     return verdict == "allow"
 
 
+@unittest.skipUnless(shutil.which("timeout"), "the runner needs GNU timeout")
 class RolloutIsolationTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
