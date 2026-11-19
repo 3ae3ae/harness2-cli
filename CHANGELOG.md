@@ -12,6 +12,8 @@ The first release of Harness² CLI, a general-purpose version of
 
 ### Added
 
+- Native Antigravity CLI (`agy`) executor and improver support, with isolated profile configuration, managed process cancellation, structured telemetry, CLI setup/doctor integration, documentation, and offline regression tests.
+
 - One `harness2` command with subcommands: `init`, `doctor`, `task`, `run`, `status`,
   `stop`, `diff`, `eval`, `apply`, `judge`, `report`, `runs`, `config`, `chat`, `guide`, `login`,
   `setup`, `demo`, `bridge`, `completion`.
